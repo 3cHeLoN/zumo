@@ -83,6 +83,12 @@ class ZumoControl:
     def deblink(self, button):
         self.set_speeds(503, 503)
 
+    def calibrate(self, button):
+        self.set_speeds(505, 505)
+
+    def follow(self, button):
+        self.set_speeds(506, 506)
+
 
 def main():
     conn = SerialConnection('/dev/ttyUSB0')
@@ -94,6 +100,8 @@ def main():
     controller.button_trigger_r.when_released = zumo.dehonk
     controller.button_a.when_pressed = zumo.blink
     controller.button_a.when_released = zumo.deblink
+    controller.button_b.when_released = zumo.calibrate
+    controller.button_start.when_released = zumo.follow
 
     def joystick_state():
         x_axis = controller.axis_l.x
