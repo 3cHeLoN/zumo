@@ -3,8 +3,7 @@ import time
 import serial
 import socket
 import numpy as np
-import signal
-from xbox360controller import Xbox360Controller
+import inputs
 from threading import Event, Thread
 from time import sleep
 
@@ -13,11 +12,20 @@ class SerialConnection:
 
     def __init__(self, device):
         self.ser = serial.Serial(port=device, baudrate=9600)
+        self._encoding = 'utf-8'
+
+    @property
+    def encoding(self):
+        return self._encoding
+
+    @encoding.setter
+    def encoding(self, value):
+        self._encoding = value
 
     def send(self, msg_string):
         #msg_string += '\n'
-        self.ser.write(msg_string.encode('utf-8'))
-        print(msg_string.encode('utf-8'))
+        self.ser.write(msg_string.encode(self._encoding))
+        print(msg_string.encode(self._encoding))
 
     def recv(self):
         response = None
@@ -82,67 +90,63 @@ class IPConnection:
         return [int(x) for x in raw_data.split()]
 
 
-class ZumoControl(Thread):
+class ZumoControl:
 
-    def __init__(self, connection, xbox, event):
+    def __init__(self, connection):
         super().__init__()
-        self.stopped = event
         self.connection = connection
-        self.max_speed = 15 # 400
+        self.max_speed = 128
         self.max_angle = 75 / 180 * np.pi
         self._last_lspeed = 0
         self._last_rspeed = 0
 
-        self._time_delta = 0.02
-        self._last_update_time = 0
-        self.x_axis = 0
+        self.deadzone = 20
         self.ltrigger = 0
         self.rtrigger = 0
-        self.deadzone = 0.2
-        self.xbox = xbox
-
-    def run(self):
-        while not self.stopped.wait(self._time_delta):
-            self.ltrigger = self.xbox.trigger_l.value * (self.xbox.trigger_l.value > self.deadzone)
-            self.rtrigger = self.xbox.trigger_r.value * (self.xbox.trigger_r.value > self.deadzone)
-            self.x_axis = self.xbox.axis_l.x * (abs(self.xbox.axis_l.x) > self.deadzone)
-            self.update_speeds()
+        self.x_axis = 0
 
     def set_speeds(self, left_speed, right_speed):
-        # if left_speed == self._last_lspeed and right_speed == self._last_rspeed:
-        #     return
-        if (left_speed != self._last_lspeed):
-            self.connection.send(chr(left_speed + self.max_speed))
-            self._last_lspeed = left_speed
-            sleep(1)
-            print(self.connection.read_until())
-        if (right_speed != self._last_rspeed):
-            self.connection.send(chr(right_speed + self.max_speed + 64))
-            self._last_rspeed = right_speed
-            sleep(1)
-            print(self.connection.read_until())
+        if (left_speed == self._last_lspeed and right_speed == self._last_rspeed):
+            return
+
+        self.connection.send(chr(left_speed + self.max_speed) + chr(right_speed + self.max_speed) + '\n')
+        self._last_lspeed = left_speed
+        self._last_rspeed = right_speed
+
+    def set_ltrigger(self, value):
+        self.ltrigger = (value * (value > self.deadzone)) / 255
+        self.update_speeds()
+
+    def set_rtrigger(self, value):
+        self.rtrigger = (value * (value > self.deadzone)) / 255
+        self.update_speeds()
+
+    def set_xaxis(self, value):
+        self.x_axis = (value * (abs(value) > self.deadzone)) / (2**15)
+        self.update_speeds()
 
     def update_speeds(self):
         speed = int((self.rtrigger - self.ltrigger) * self.max_speed)
+        if speed == 128:
+            speed = 127
 
         # rotate in-place
         if speed == 0:
             l_speed = int(self.x_axis * self.max_speed)
             r_speed = -l_speed
+            if abs(r_speed == 128):
+                r_speed = np.sign(r_speed) * 127
         # steer
-        else:
+        elif self.x_axis > 0:
+            l_speed = speed
+            r_speed = int(np.cos(self.x_axis * self.max_angle) * speed)
+        elif self.x_axis < 0:
             l_speed = int(np.cos(self.x_axis * self.max_angle) * speed)
             r_speed = speed
-        # elif self.x_axis < 0.2:
-        #     l_speed = speed
-        #     r_speed = speed
-        # else:
-        #     if speed == 0:
-        #         l_speed = int(self.x_axis * self.max_speed)
-        #         r_speed = -l_speed
-        #     else:
-        #         l_speed = speed
-        #         r_speed = int(np.cos(self.x_axis * self.max_angle) * speed)
+        else:
+            l_speed = speed
+            r_speed = speed
+
         self.set_speeds(l_speed, r_speed)
 
     def honk(self, button):
@@ -162,18 +166,41 @@ class ZumoControl(Thread):
 
 
 def main():
-    conn = SerialConnection('/dev/ttyUSB0')
-    stop_flag = Event()
+    #conn = SerialConnection('/dev/ttyUSB0')
+    conn = SerialConnection('COM4')
+    conn.encoding = 'latin-1'
 
-    try:
-        with Xbox360Controller(0, axis_threshold=0.2) as controller:
-            zumo = ZumoControl(conn, controller, stop_flag)
-            zumo.start()
-            signal.pause()
-    except KeyboardInterrupt:
-        pass
-    finally:
-        stop_flag.set()
+    zumo = ZumoControl(conn)
+
+    running = True
+
+    # start the event loop
+    while running:
+
+        for event in inputs.get_gamepad():
+            if event.ev_type == 'Key':
+                if event.code == 'BTN_SOUTH' and event.state == 1:
+                    print('Button south down')
+                print(event.code)
+            if event.ev_type == 'Absolute':
+                if event.code == 'ABS_RZ':
+                    zumo.set_rtrigger(event.state)
+                if event.code == 'ABS_Z':
+                    zumo.set_ltrigger(event.state)
+                if event.code == 'ABS_X':
+                    zumo.set_xaxis(event.state)
+
+            print(event.ev_type, event.code, event.state)
+
+    # try:
+    #     with Xbox360Controller(0, axis_threshold=0.2) as controller:
+    #         zumo = ZumoControl(conn, controller, stop_flag)
+    #         zumo.start()
+    #         signal.pause()
+    # except KeyboardInterrupt:
+    #     pass
+    # finally:
+    #     stop_flag.set()
 
 
 
