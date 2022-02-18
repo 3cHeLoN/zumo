@@ -1,8 +1,13 @@
+import time
+
 import serial
 import socket
 import numpy as np
+import signal
 from xbox360controller import Xbox360Controller
-from threading import Timer
+from threading import Event, Thread
+from time import sleep
+
 
 class SerialConnection:
 
@@ -10,8 +15,9 @@ class SerialConnection:
         self.ser = serial.Serial(port=device, baudrate=9600)
 
     def send(self, msg_string):
-        msg_string += '\n'
+        #msg_string += '\n'
         self.ser.write(msg_string.encode('utf-8'))
+        print(msg_string.encode('utf-8'))
 
     def recv(self):
         response = None
@@ -76,44 +82,67 @@ class IPConnection:
         return [int(x) for x in raw_data.split()]
 
 
-class ZumoControl:
+class ZumoControl(Thread):
 
-    def __init__(self, connection):
+    def __init__(self, connection, xbox, event):
+        super().__init__()
+        self.stopped = event
         self.connection = connection
-        self.max_speed = 400
+        self.max_speed = 15 # 400
         self.max_angle = 75 / 180 * np.pi
         self._last_lspeed = 0
         self._last_rspeed = 0
 
-    def set_speeds(self, left_speed, right_speed):
-        if left_speed == self._last_lspeed and right_speed == self._last_rspeed:
-            return
-        self._last_lspeed = left_speed
-        self._last_rspeed = right_speed
-        msg_string = "{} {}".format(
-            left_speed,
-            right_speed)
-        self.connection.send(msg_string)
+        self._time_delta = 0.02
+        self._last_update_time = 0
+        self.x_axis = 0
+        self.ltrigger = 0
+        self.rtrigger = 0
+        self.deadzone = 0.2
+        self.xbox = xbox
 
-    def update_speeds(self, x_axis, ltrigger, rtrigger):
-        speed = int((rtrigger - ltrigger) * self.max_speed)
-        if x_axis < -0.2:
-            if speed == 0:
-                l_speed = int(x_axis * self.max_speed)
-                r_speed = -l_speed
-            else:
-                l_speed = int(np.cos(x_axis * self.max_angle) * speed)
-                r_speed = speed
-        elif x_axis < 0.2:
-            l_speed = speed
-            r_speed = speed
+    def run(self):
+        while not self.stopped.wait(self._time_delta):
+            self.ltrigger = self.xbox.trigger_l.value * (self.xbox.trigger_l.value > self.deadzone)
+            self.rtrigger = self.xbox.trigger_r.value * (self.xbox.trigger_r.value > self.deadzone)
+            self.x_axis = self.xbox.axis_l.x * (abs(self.xbox.axis_l.x) > self.deadzone)
+            self.update_speeds()
+
+    def set_speeds(self, left_speed, right_speed):
+        # if left_speed == self._last_lspeed and right_speed == self._last_rspeed:
+        #     return
+        if (left_speed != self._last_lspeed):
+            self.connection.send(chr(left_speed + self.max_speed))
+            self._last_lspeed = left_speed
+            sleep(1)
+            print(self.connection.read_until())
+        if (right_speed != self._last_rspeed):
+            self.connection.send(chr(right_speed + self.max_speed + 64))
+            self._last_rspeed = right_speed
+            sleep(1)
+            print(self.connection.read_until())
+
+    def update_speeds(self):
+        speed = int((self.rtrigger - self.ltrigger) * self.max_speed)
+
+        # rotate in-place
+        if speed == 0:
+            l_speed = int(self.x_axis * self.max_speed)
+            r_speed = -l_speed
+        # steer
         else:
-            if speed == 0:
-                l_speed = int(x_axis * self.max_speed)
-                r_speed = -l_speed
-            else:
-                l_speed = speed
-                r_speed = int(np.cos(x_axis * self.max_angle) * speed)
+            l_speed = int(np.cos(self.x_axis * self.max_angle) * speed)
+            r_speed = speed
+        # elif self.x_axis < 0.2:
+        #     l_speed = speed
+        #     r_speed = speed
+        # else:
+        #     if speed == 0:
+        #         l_speed = int(self.x_axis * self.max_speed)
+        #         r_speed = -l_speed
+        #     else:
+        #         l_speed = speed
+        #         r_speed = int(np.cos(self.x_axis * self.max_angle) * speed)
         self.set_speeds(l_speed, r_speed)
 
     def honk(self, button):
@@ -134,70 +163,77 @@ class ZumoControl:
 
 def main():
     conn = SerialConnection('/dev/ttyUSB0')
-    zumo = ZumoControl(conn)
-    controller = Xbox360Controller(0, axis_threshold=0.2)
-    controller.button_trigger_l.when_pressed = zumo.honk
-    controller.button_trigger_l.when_released = zumo.dehonk
-    controller.button_trigger_r.when_pressed = zumo.low_honk
-    controller.button_trigger_r.when_released = zumo.dehonk
-    controller.button_a.when_pressed = zumo.blink
-    controller.button_a.when_released = zumo.deblink
-    #sd = sched.scheduler(time.time, time.sleep)
-    data_conn = IPConnection("10.42.0.227", 8888)
-
-    def joystick_state():
-        x_axis = controller.axis_l.x
-        ltrigger = controller.trigger_l.value
-        rtrigger = controller.trigger_r.value
-        zumo.update_speeds(x_axis, ltrigger, rtrigger)
-        #sd.enter(0.01, 1, joystick_state, (sc,))
-        Timer(0.01, joystick_state, ()).start()
-
-    def two_complement(value):
-        sign = value & (1 << 7)
-        return -1 ** sign * (value & 0x7F)
-
-    def unpack(data_str):
-        data = {}
-        data['timestamp'] = int.from_bytes(data_str[0:2],
-                                           byteorder='little',
-                                           signed=False)
-        data['encoder_left'] = int.from_bytes(data_str[2:4],
-                                              byteorder='little',
-                                              signed=True)
-        data['encoder_right'] = int.from_bytes(data_str[4:6],
-                                               byteorder='little',
-                                               signed=True)
-        data['accel_x'] = int.from_bytes(data_str[6:8],
-                                         byteorder='little',
-                                         signed=True)
-        data['accel_y'] = int.from_bytes(data_str[8:10],
-                                         byteorder='little',
-                                         signed=True)
-        data['accel_z'] = int.from_bytes(data_str[10:12],
-                                         byteorder='little',
-                                         signed=True)
-        data['gyro_x'] = int.from_bytes(data_str[12:14],
-                                        byteorder='little',
-                                        signed=True)
-        data['gyro_y'] = int.from_bytes(data_str[14:16],
-                                        byteorder='little',
-                                        signed=True)
-        data['gyro_z'] = int.from_bytes(data_str[16:18],
-                                        byteorder='little',
-                                        signed=True)
-        return data
+    stop_flag = Event()
 
     try:
-        #sd.enter(0.01, 1, joystick_state, (sd,))
-        #sd.run(blocking=False)
-        Timer(0.01, joystick_state, ()).start()
-        print("Going into for loop")
-        while True:
-            data = data_conn.recv()
-            print(data)
+        with Xbox360Controller(0, axis_threshold=0.2) as controller:
+            zumo = ZumoControl(conn, controller, stop_flag)
+            zumo.start()
+            signal.pause()
     except KeyboardInterrupt:
         pass
+    finally:
+        stop_flag.set()
+
+
+
+    # # data_conn = IPConnection("10.42.0.227", 8888)
+    #
+    # def joystick_state():
+    #     x_axis = controller.axis_l.x
+    #     ltrigger = controller.trigger_l.value
+    #     rtrigger = controller.trigger_r.value
+    #     zumo.update_speeds(x_axis, ltrigger, rtrigger)
+    #     #sd.enter(0.01, 1, joystick_state, (sc,))
+    #     Timer(0.01, joystick_state, ()).start()
+    #     print(x_axis, ltrigger, rtrigger)
+    #
+    # def two_complement(value):
+    #     sign = value & (1 << 7)
+    #     return -1 ** sign * (value & 0x7F)
+    #
+    # def unpack(data_str):
+    #     data = {}
+    #     data['timestamp'] = int.from_bytes(data_str[0:2],
+    #                                        byteorder='little',
+    #                                        signed=False)
+    #     data['encoder_left'] = int.from_bytes(data_str[2:4],
+    #                                           byteorder='little',
+    #                                           signed=True)
+    #     data['encoder_right'] = int.from_bytes(data_str[4:6],
+    #                                            byteorder='little',
+    #                                            signed=True)
+    #     data['accel_x'] = int.from_bytes(data_str[6:8],
+    #                                      byteorder='little',
+    #                                      signed=True)
+    #     data['accel_y'] = int.from_bytes(data_str[8:10],
+    #                                      byteorder='little',
+    #                                      signed=True)
+    #     data['accel_z'] = int.from_bytes(data_str[10:12],
+    #                                      byteorder='little',
+    #                                      signed=True)
+    #     data['gyro_x'] = int.from_bytes(data_str[12:14],
+    #                                     byteorder='little',
+    #                                     signed=True)
+    #     data['gyro_y'] = int.from_bytes(data_str[14:16],
+    #                                     byteorder='little',
+    #                                     signed=True)
+    #     data['gyro_z'] = int.from_bytes(data_str[16:18],
+    #                                     byteorder='little',
+    #                                     signed=True)
+    #     return data
+    #
+    # try:
+    #     #sd.enter(0.01, 1, joystick_state, (sd,))
+    #     #sd.run(blocking=False)
+    #     Timer(0.01, joystick_state, ()).start()
+    #     print("Going into for loop")
+    #     while True:
+    #         pass
+    #         # data = data_conn.recv()
+    #         # print(data)
+    # except KeyboardInterrupt:
+    #     pass
 
 
 if __name__ == '__main__':
