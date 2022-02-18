@@ -2,7 +2,7 @@
 # The zumo xyz-project
 This is the zumo project used for measuring IMU data with the Pololu zumo rover, or just have some plain old fun!
 
-<img src="./zumo.png" alt="drawing" width="500"/>
+![Zumo rover](./assets/zumo.jpeg)
 
 ##Documentation
 The zumo rover is extensively documented at <https://www.pololu.com/docs/0J63>.
