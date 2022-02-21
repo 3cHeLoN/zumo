@@ -66,7 +66,7 @@ void drive()
   if (lineSensorValues[0] > 50 & lineSensorValues[4] > 50) {
     // above ground marker detected
     if (~agm_detected) {
-      buzzer.playFrequency(3000, 1000, 10);
+      buzzer.playFrequency(800, 200, 15);
       agm_detected = true;
     }
   }
@@ -156,6 +156,7 @@ void loop() {
     else if (motor_speed_1 == TOGGLE_LINE_FOLLOWER) {
       if (following) {
         following = false;
+        motors.setSpeeds(0, 0);
       }
       else {
         following = true;
