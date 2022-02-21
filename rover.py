@@ -1,11 +1,8 @@
-import time
-
 import serial
 import socket
 import numpy as np
 import inputs
-from threading import Event, Thread
-from time import sleep
+from enum import auto, Enum
 
 
 class SerialConnection:
@@ -90,12 +87,34 @@ class IPConnection:
         return [int(x) for x in raw_data.split()]
 
 
+class ZumoState(Enum):
+    NEUTRAL = auto()
+    HONK1_START = auto()
+    HONK2_START = auto()
+    HONK_STOP = auto()
+    ENABLE_LEDS = auto()
+    DISABLE_LEDS = auto()
+    CALIBRATE_LINE_FOLLOWER = auto()
+    TOGGLE_LINE_FOLLOW = auto()
+
+
 class ZumoControl:
+
+    state: ZumoState
+    state_map = {
+        ZumoState.HONK1_START: 241,
+        ZumoState.HONK2_START: 242,
+        ZumoState.HONK_STOP: 243,
+        ZumoState.ENABLE_LEDS: 244,
+        ZumoState.DISABLE_LEDS: 245,
+        ZumoState.CALIBRATE_LINE_FOLLOWER: 246,
+        ZumoState.TOGGLE_LINE_FOLLOW: 247
+    }
 
     def __init__(self, connection):
         super().__init__()
         self.connection = connection
-        self.max_speed = 128
+        self.max_speed = 120
         self.max_angle = 75 / 180 * np.pi
         self._last_lspeed = 0
         self._last_rspeed = 0
@@ -105,11 +124,17 @@ class ZumoControl:
         self.rtrigger = 0
         self.x_axis = 0
 
+    def speed_to_bitvalue(self, speed):
+        # map speed between 0 and 240
+        return speed + self.max_speed
+
     def set_speeds(self, left_speed, right_speed):
         if (left_speed == self._last_lspeed and right_speed == self._last_rspeed):
             return
 
-        self.connection.send(chr(left_speed + self.max_speed) + chr(right_speed + self.max_speed) + '\n')
+        self.connection.send(chr(self.speed_to_bitvalue(left_speed))
+                             + chr(self.speed_to_bitvalue(right_speed)) + '\n')
+
         self._last_lspeed = left_speed
         self._last_rspeed = right_speed
 
@@ -124,6 +149,10 @@ class ZumoControl:
     def set_xaxis(self, value):
         self.x_axis = (value * (abs(value) > self.deadzone)) / (2**15)
         self.update_speeds()
+
+    def update_state(self, state):
+        state_speed = self.state_map[state]
+        self.connection.send(chr(state_speed) + chr(state_speed) + '\n')
 
     def update_speeds(self):
         speed = int((self.rtrigger - self.ltrigger) * self.max_speed)
@@ -149,25 +178,10 @@ class ZumoControl:
 
         self.set_speeds(l_speed, r_speed)
 
-    def honk(self, button):
-        self.set_speeds(500, 500)
-
-    def low_honk(self, button):
-        self.set_speeds(502, 502)
-
-    def dehonk(self, button):
-        self.set_speeds(501, 501)
-
-    def blink(self, button):
-        self.set_speeds(504, 504)
-
-    def deblink(self, button):
-        self.set_speeds(503, 503)
-
 
 def main():
-    #conn = SerialConnection('/dev/ttyUSB0')
-    conn = SerialConnection('COM4')
+    conn = SerialConnection('/dev/ttyUSB0')
+    #conn = SerialConnection('COM4')
     conn.encoding = 'latin-1'
 
     zumo = ZumoControl(conn)
@@ -179,9 +193,21 @@ def main():
 
         for event in inputs.get_gamepad():
             if event.ev_type == 'Key':
-                if event.code == 'BTN_SOUTH' and event.state == 1:
-                    print('Button south down')
-                print(event.code)
+                if event.code == 'BTN_TL' and event.state == 1:
+                    zumo.update_state(ZumoState.HONK1_START)
+                elif event.code == 'BTN_TR' and event.state == 1:
+                    zumo.update_state(ZumoState.HONK2_START)
+                elif event.code in ['BTN_TL', 'BTN_TR'] and event.state == 0:
+                    zumo.update_state(ZumoState.HONK_STOP)
+                elif event.code == 'BTN_SOUTH' and event.state == 1:
+                    zumo.update_state(ZumoState.TOGGLE_LINE_FOLLOW)
+                elif event.code == 'BTN_EAST' and event.state == 1:
+                    zumo.update_state(ZumoState.CALIBRATE_LINE_FOLLOWER)
+                elif event.code == 'BTN_NORTH' and event.state == 1:
+                    zumo.update_state(ZumoState.ENABLE_LEDS)
+                elif event.code == 'BTN_NORTH' and event.state == 0:
+                    zumo.update_state(ZumoState.DISABLE_LEDS)
+
             if event.ev_type == 'Absolute':
                 if event.code == 'ABS_RZ':
                     zumo.set_rtrigger(event.state)
@@ -191,18 +217,6 @@ def main():
                     zumo.set_xaxis(event.state)
 
             print(event.ev_type, event.code, event.state)
-
-    # try:
-    #     with Xbox360Controller(0, axis_threshold=0.2) as controller:
-    #         zumo = ZumoControl(conn, controller, stop_flag)
-    #         zumo.start()
-    #         signal.pause()
-    # except KeyboardInterrupt:
-    #     pass
-    # finally:
-    #     stop_flag.set()
-
-
 
     # # data_conn = IPConnection("10.42.0.227", 8888)
     #

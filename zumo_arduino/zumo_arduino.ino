@@ -4,6 +4,15 @@ Zumo32U4Motors motors;
 Zumo32U4Buzzer buzzer;
 Zumo32U4LineSensors lineSensors;
 
+// states
+#define HONK1_START 241
+#define HONK2_START 242
+#define HONK_STOP 243
+#define ENABLE_LEDS 244
+#define DISABLE_LEDS 245
+#define CALIBRATE_LINE_FOLLOWER 246
+#define TOGGLE_LINE_FOLLOWER 247
+
 const uint16_t maxSpeed = 300;
 int16_t lastError = 0;
 bool following = false;
@@ -103,81 +112,64 @@ void loop() {
 
   if (Serial1.available() >= 3)
   {
-    uint8_t c1 = Serial1.read();
-    uint8_t c2 = Serial1.read();
-    motor_speed_left = map(c1, 0, 255, -400, 400);
-    motor_speed_right = map(c2, 0, 255, -400, 400);
-    motors.setSpeeds(motor_speed_left, motor_speed_right);
-    char buffer[10];
-    Serial1.readBytesUntil('\n', buffer, 10);
-  }
-}
-
-void test() {
-  int motor_speed_1;
-  int motor_speed_2;
-  if (0) {
-    //Serial1.print(motor_speed_1);
-    //Serial1.println(motor_speed_2);
-    //int motor_speed_1 = Serial1.parseInt();
-    //int motor_speed_2 = Serial1.parseInt();
-
-    //Serial1.print("m1: ");
-    //Serial1.print(motor_speed_1);
-    //Serial1.print(", m2: ");
-    //Serial1.println(motor_speed_2);
-
-    // Set motor speeds
-    if (motor_speed_1 < 500) {
+    uint8_t motor_speed_1 = Serial1.read();
+    uint8_t motor_speed_2 = Serial1.read();
+    // regular speed update
+    if (motor_speed_1 <= 240)
+    {
+      motor_speed_1 = map(motor_speed_1, 0, 240, -400, 400);
+      motor_speed_2 = map(motor_speed_2, 0, 240, -400, 400);
       motors.setSpeeds(motor_speed_1, motor_speed_2);
     }
+
+    /*
+       Handle state updates.
+    */
     // honk 1 start
-    else if (motor_speed_1 == 500) {
+    else if (motor_speed_1 == HONK1_START) {
       if (buzzer.isPlaying() == 0)
         buzzer.playFrequency(4000, 2000, 12);
     }
     // stop honk
-    else if (motor_speed_1 == 501) {
+    else if (motor_speed_1 == HONK_STOP) {
       buzzer.stopPlaying();
     }
     // honk 2 start
-    else if (motor_speed_1 == 502) {
+    else if (motor_speed_1 == HONK2_START) {
       if (buzzer.isPlaying() == 0)
         buzzer.playFrequency(1000, 2000, 12);
     }
     // disable leds
-    else if (motor_speed_1 == 503) {
+    else if (motor_speed_1 == DISABLE_LEDS) {
       ledRed(0);
       ledYellow(0);
       ledGreen(0);
     }
     // enable leds
-    else if (motor_speed_1 == 504) {
+    else if (motor_speed_1 == ENABLE_LEDS) {
       ledRed(1);
       ledYellow(1);
       ledGreen(1);
     }
     // calibrate line follower
-    else if (motor_speed_1 == 505) {
+    else if (motor_speed_1 == CALIBRATE_LINE_FOLLOWER) {
       calibrateSensors();
     }
-    else if (motor_speed_1 == 506) {
+    else if (motor_speed_1 == TOGGLE_LINE_FOLLOWER) {
       if (following) {
         following = false;
       }
       else {
         following = true;
       }
-    }
 
-    // flush buffer
-    //char input[80];
-    //Serial1.readBytesUntil('\n', input, 80);
-    Serial1.flush();
+
+    }
+    char buffer[10];
+    Serial1.readBytesUntil('\n', buffer, 10);
   }
 
   if (following) {
     drive();
   }
-
 }
