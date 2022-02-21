@@ -114,21 +114,19 @@ void loop() {
   {
     uint8_t motor_speed_1 = Serial1.read();
     uint8_t motor_speed_2 = Serial1.read();
+
     // regular speed update
     if (motor_speed_1 <= 240)
     {
-      motor_speed_1 = map(motor_speed_1, 0, 240, -400, 400);
-      motor_speed_2 = map(motor_speed_2, 0, 240, -400, 400);
-      motors.setSpeeds(motor_speed_1, motor_speed_2);
-    }
+      int16_t motor_speed_left = map(motor_speed_1, 0, 240, -400, 400);
+      int16_t motor_speed_right = map(motor_speed_2, 0, 240, -400, 400);
 
-    /*
-       Handle state updates.
-    */
+      motors.setSpeeds(motor_speed_left, motor_speed_right);
+    }
     // honk 1 start
     else if (motor_speed_1 == HONK1_START) {
       if (buzzer.isPlaying() == 0)
-        buzzer.playFrequency(4000, 2000, 12);
+        buzzer.playFrequency(500, 2000, 12);
     }
     // stop honk
     else if (motor_speed_1 == HONK_STOP) {
