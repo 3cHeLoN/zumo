@@ -1,3 +1,7 @@
+from threading import Thread
+from io import StringIO
+from typing import Callable
+import argparse
 import serial
 import socket
 import numpy as np
@@ -60,31 +64,7 @@ class IPConnection:
         while '\n' not in raw_data:
             raw_data += self.socket.recv(1024).decode('utf-8')
 
-        '''
-        while len(raw_data) < 18:
-            raw_data = raw_data + self.socket.recv(100)
-
-        if len(raw_data) > 18:
-            self.data_left = raw_data[18:]
-        raw_data = raw_data[:18]
-
-        # unpack
-        timestamp = (raw_data[0] << 8) + raw_data[1]
-        count_left = (raw_data[2] << 8) # + raw_data[3]
-        count_right = (raw_data[4] << 8) #+ raw_data[5]
-        accel_x = np.int16((raw_data[6] << 8) + raw_data[7])
-        accel_y = np.int16((raw_data[8] << 8) + raw_data[9])
-        accel_z = np.int16((raw_data[10] << 8) + raw_data[11])
-        gyro_x = np.int16((raw_data[12] << 8) + raw_data[13])
-        gyro_y = np.int16((raw_data[14] << 8) + raw_data[15])
-        gyro_z = np.int16((raw_data[16] << 8) + raw_data[17])
-        print(timestamp,
-              count_left, count_right,
-              accel_x, accel_y, accel_z,
-              gyro_x, gyro_y, gyro_z)
-        '''
-
-        return [int(x) for x in raw_data.split()]
+        return raw_data
 
 
 class ZumoState(Enum):
@@ -179,12 +159,87 @@ class ZumoControl:
         self.set_speeds(l_speed, r_speed)
 
 
+class DataWriter(Thread):
+
+    """Write text in a separate thread."""
+
+    def __init__(self, filename: str) -> None:
+        super().__init__()
+        self.filename = filename
+        self.text_block = ''
+
+    def set_text_block(self, text_block):
+        self.text_block = text_block
+
+    def reset(self):
+        with open(self.filename, 'w', encoding='utf-8') as file:
+            file.writelines('')
+
+    def run(self):
+        with open(self.filename, 'a', encoding='utf-8') as file:
+            file.writelines(self.text_block)
+
+
+class DataRecorder(Thread):
+
+    buffer: StringIO
+
+    def __init__(self, ip_connection: IPConnection, data_writer: DataWriter = None, callback: Callable = None):
+        super().__init__()
+        self.ip_connection = ip_connection
+        self.stopped = False
+        self.writer = data_writer
+        self.writer.start()
+        self.buffer = StringIO()
+        self.buffer_size = 4096
+        self.callback = callback
+
+    def stop(self):
+        self.stopped = True
+
+    def run(self):
+        while not self.stopped:
+            raw_data = self.ip_connection.recv()
+            if self.callback:
+                self.callback(self.unpack(raw_data))
+
+            if self.writer:
+                self.buffer.writelines(raw_data)
+                if self.buffer.tell() > self.buffer_size:
+                    self.buffer.seek(0)
+                    self.writer.set_text_block(self.buffer.readlines())
+                    self.writer.run()
+                    self.buffer.flush()
+
+    def unpack(self, raw_data):
+        data_values = [int(x) for x in raw_data.split()]
+        keys = ['timestamp',
+                'encoder_left', 'encoder_right',
+                'accel_x', 'accel_y', 'accel_z',
+                'gyro_x', 'gyro_y', 'gyro_z']
+        data = {key: data_point for key, data_point in zip(keys, data_values)}
+        return data
+
 def main():
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--outfile', default=None)
+    args = parser.parse_args()
+
     conn = SerialConnection('/dev/ttyUSB0')
+    ip_conn = IPConnection("192.168.4.1", 8888)
+
     #conn = SerialConnection('COM4')
     conn.encoding = 'latin-1'
 
+    writer = None
+    if args.outfile:
+        writer = DataWriter(args.outfile)
+        writer.reset()
+
     zumo = ZumoControl(conn)
+    recorder = DataRecorder(ip_conn, data_writer=writer)
+    recorder.start()
 
     running = True
 
@@ -217,64 +272,6 @@ def main():
                     zumo.set_xaxis(event.state)
 
             print(event.ev_type, event.code, event.state)
-
-    # # data_conn = IPConnection("10.42.0.227", 8888)
-    #
-    # def joystick_state():
-    #     x_axis = controller.axis_l.x
-    #     ltrigger = controller.trigger_l.value
-    #     rtrigger = controller.trigger_r.value
-    #     zumo.update_speeds(x_axis, ltrigger, rtrigger)
-    #     #sd.enter(0.01, 1, joystick_state, (sc,))
-    #     Timer(0.01, joystick_state, ()).start()
-    #     print(x_axis, ltrigger, rtrigger)
-    #
-    # def two_complement(value):
-    #     sign = value & (1 << 7)
-    #     return -1 ** sign * (value & 0x7F)
-    #
-    # def unpack(data_str):
-    #     data = {}
-    #     data['timestamp'] = int.from_bytes(data_str[0:2],
-    #                                        byteorder='little',
-    #                                        signed=False)
-    #     data['encoder_left'] = int.from_bytes(data_str[2:4],
-    #                                           byteorder='little',
-    #                                           signed=True)
-    #     data['encoder_right'] = int.from_bytes(data_str[4:6],
-    #                                            byteorder='little',
-    #                                            signed=True)
-    #     data['accel_x'] = int.from_bytes(data_str[6:8],
-    #                                      byteorder='little',
-    #                                      signed=True)
-    #     data['accel_y'] = int.from_bytes(data_str[8:10],
-    #                                      byteorder='little',
-    #                                      signed=True)
-    #     data['accel_z'] = int.from_bytes(data_str[10:12],
-    #                                      byteorder='little',
-    #                                      signed=True)
-    #     data['gyro_x'] = int.from_bytes(data_str[12:14],
-    #                                     byteorder='little',
-    #                                     signed=True)
-    #     data['gyro_y'] = int.from_bytes(data_str[14:16],
-    #                                     byteorder='little',
-    #                                     signed=True)
-    #     data['gyro_z'] = int.from_bytes(data_str[16:18],
-    #                                     byteorder='little',
-    #                                     signed=True)
-    #     return data
-    #
-    # try:
-    #     #sd.enter(0.01, 1, joystick_state, (sd,))
-    #     #sd.run(blocking=False)
-    #     Timer(0.01, joystick_state, ()).start()
-    #     print("Going into for loop")
-    #     while True:
-    #         pass
-    #         # data = data_conn.recv()
-    #         # print(data)
-    # except KeyboardInterrupt:
-    #     pass
 
 
 if __name__ == '__main__':
