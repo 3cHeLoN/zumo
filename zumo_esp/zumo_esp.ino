@@ -74,7 +74,7 @@ void ICACHE_RAM_ATTR ISRRightEncoder()
 void setup() {
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, HIGH);
-  delay(1000);
+  delay(2000);
   Serial.begin(115200);
   Serial.println();
   Serial.print("Configuring access point...");
@@ -136,7 +136,9 @@ void init_l3gd20h()
   // 500 dps
   write_address(L3GD20H_ADDR, L3GD20H_CTRL4, 0x10);
   // 50 HZ mode, no cut-off
-  write_address(L3GD20H_ADDR, L3GD20H_CTRL1, 0x4F);
+  //write_address(L3GD20H_ADDR, L3GD20H_CTRL1, 0x4F);
+  // 50 Hz mode 16.6 Hz cutt-off
+  write_address(L3GD20H_ADDR, L3GD20H_CTRL1, 0x8F);
 }
 
 void write_address(const uint8_t device, const uint8_t address, uint8_t value)
@@ -205,32 +207,7 @@ void send_imu_data()
           gyro_y,
           gyro_z,
           packet_count);
-  /*
-  char out[] =
-  {
-    (char)timestamp >> 8,
-    (char)timestamp,
-    (char)countLeft >> 8,
-    (char)countLeft,
-    (char)countRight,
-    (char)countRight >> 8,
-    (char)accel_x >> 8,
-    (char)accel_x,
-    (char)accel_y >> 8,
-    (char)accel_y,
-    (char)accel_z >> 8,
-    (char)accel_z,
-    (char)gyro_x >> 8,
-    (char)gyro_x,
-    (char)gyro_y >> 8,
-    (char)gyro_y,
-    (char)gyro_z >> 8,
-    (char)gyro_z,
-    '\n'
-  };
-  
-  local_client.write(out, 18);
-  */
+
   local_client.write(temp);
 }
 
