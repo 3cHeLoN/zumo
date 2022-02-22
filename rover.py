@@ -216,7 +216,8 @@ class DataRecorder(Thread):
         keys = ['timestamp',
                 'encoder_left', 'encoder_right',
                 'accel_x', 'accel_y', 'accel_z',
-                'gyro_x', 'gyro_y', 'gyro_z']
+                'gyro_x', 'gyro_y', 'gyro_z',
+                'packet_count']
         data = {key: data_point for key, data_point in zip(keys, data_values)}
         return data
 
