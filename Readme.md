@@ -1,6 +1,5 @@
-
-# The zumo xyz-project
-This is the zumo project used for measuring IMU data with the Pololu zumo rover, or just have some plain old fun!
+# The zumo rover
+This is code used for measuring IMU data with the Pololu zumo rover, or just have some plain old fun!
 
 ![Zumo rover](./assets/zumo.jpeg)
 
